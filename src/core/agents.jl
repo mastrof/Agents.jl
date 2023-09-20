@@ -1,4 +1,5 @@
 export AbstractAgent, @agent, NoSpaceAgent
+export __AGENT_GENERATOR__, @newagent
 
 """
     YourAgentType <: AbstractAgent
@@ -16,6 +17,8 @@ The [`@agent`](@ref) macro ensures that all of these constrains are in place
 and hence it is the **the only supported way to create agent types**.
 """
 abstract type AbstractAgent end
+
+__AGENT_GENERATOR__ = Dict{Symbol,JLKwStruct}()
 
 """
     @agent YourAgentType{X} AnotherAgentType [OptionalSupertype] begin
@@ -192,6 +195,7 @@ f(x::Animal) = ... # uses `CommonTraits` fields
 f(x::Person) = ... # uses fields that all "persons" have
 ```
 """
+#==
 macro agent(new_name, base_type, super_type, extra_fields)
     # This macro was generated with the guidance of @rdeits on Discourse:
     # https://discourse.julialang.org/t/
@@ -260,6 +264,95 @@ macro agent(new_name, base_type, extra_fields)
         Agents.@agent($new_name, $base_type, Agents.AbstractAgent, $extra_fields)
     end)
 end
+==#
+
+
+macro agent(new_name, extra_fields)
+    quote
+        let
+            additional_fields = $(QuoteNode(extra_fields.args))
+            # here, we mutate any const fields defined by the consts variable in the macro
+            additional_fields = filter(f -> typeof(f) != LineNumberNode, additional_fields)
+            args_names = map(f -> f isa Expr ? f.args[1] : f, additional_fields)
+            index_consts = findfirst(f -> f == :constants, args_names)
+            if index_consts != nothing
+                consts_args = eval(splice!(additional_fields, index_consts))
+                for arg in consts_args
+                    i = findfirst(a -> a == arg, args_names)
+                    additional_fields[i] = Expr(:const, additional_fields[i])
+                end
+            end
+            name = $(QuoteNode(new_name))
+            expr = quote
+                S = @expr JLKwStruct mutable struct $(name) <: Agents.AbstractAgent
+                    $(additional_fields...)
+                end
+                __AGENT_GENERATOR__[S.name] = S
+                Core.eval($$(__module__), codegen_ast(S))
+            end
+            Core.eval($(__module__), expr)
+        end
+        Core.@__doc__($(esc(Docs.namify(new_name))))
+        nothing
+    end
+end
+
+macro agent(new_name, base_type, super_type, extra_fields)
+    # This macro was generated with the guidance of @rdeits on Discourse:
+    # https://discourse.julialang.org/t/
+    # metaprogramming-obtain-actual-type-from-symbol-for-field-inheritance/84912
+
+    # hack for backwards compatibility (PR #846)
+    if base_type isa Expr
+        if base_type.args[1] == :ContinuousAgent && length(base_type.args) == 2
+            base_type = Expr(base_type.head, base_type.args..., :Float64)
+        end
+    end
+    # We start with a quote. All macros return a quote to be evaluated
+    quote
+        let
+            #base_T = Symbol(split(string($(esc(base_type))), ".")[end])
+            base_T = $(esc(base_type))
+            # remove module prefix for dictionary indexing
+            BaseAgent = __AGENT_GENERATOR__[Symbol(split(string(base_T), ".")[end])]
+            additional_fields = $(QuoteNode(extra_fields.args))
+            # here, we mutate any const fields defined by the consts variable in the macro
+            additional_fields = filter(f -> typeof(f) != LineNumberNode, additional_fields)
+            args_names = map(f -> f isa Expr ? f.args[1] : f, additional_fields)
+            index_consts = findfirst(f -> f == :constants, args_names)
+            if index_consts != nothing
+                consts_args = eval(splice!(additional_fields, index_consts))
+                for arg in consts_args
+                    i = findfirst(a -> a == arg, args_names)
+                    additional_fields[i] = Expr(:const, additional_fields[i])
+                end
+            end
+            name = $(QuoteNode(new_name))
+            expr = quote
+                # create struct with additional_fields
+                S = @expr JLKwStruct mutable struct $(name) <: $$(QuoteNode(super_type))
+                    $(additional_fields...)
+                end
+                # add fields from base type
+                S.fields = vcat($BaseAgent.fields, S.fields)
+                # add generator expression to dictionary
+                __AGENT_GENERATOR__[S.name] = S
+                # evaluate in scope
+                Core.eval($$(__module__), codegen_ast(S))
+            end
+            Core.eval($(__module__), expr)
+        end
+        # allow attaching docstrings to the new struct, issue #715
+        Core.@__doc__($(esc(Docs.namify(new_name))))
+        nothing
+    end
+end
+
+macro agent(new_name, base_type, extra_fields)
+    esc(quote
+        Agents.@agent($new_name, $base_type, Agents.AbstractAgent, $extra_fields)
+    end)
+end
 
 """
     NoSpaceAgent <: AbstractAgent
@@ -267,6 +360,15 @@ The minimal agent struct for usage with `nothing` as space (i.e., no space).
 It has the field `id::Int`, and potentially other internal fields that
 are not documented as part of the public API. See also [`@agent`](@ref).
 """
-mutable struct NoSpaceAgent <: AbstractAgent
+#==
+@newagent NoSpaceAgent begin
+    const id::Int = 1
+end
+==#
+mutable struct NoSpaceAgent
     const id::Int
 end
+NoSpaceAgent_JLKwS = @expr JLKwStruct mutable struct NoSpaceAgent <: AbstractAgent
+    const id::Int
+end
+__AGENT_GENERATOR__[NoSpaceAgent_JLKwS.name] = NoSpaceAgent_JLKwS

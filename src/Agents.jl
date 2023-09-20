@@ -9,6 +9,8 @@ end Agents
 
 using Distributed
 using DataStructures
+using ExproniconLite
+export @expr, JLKwStruct, JLKwField, codegen_ast
 using Graphs
 using DataFrames
 using Random
@@ -48,7 +50,7 @@ include("simulations/ensemblerun.jl")
 include("submodules/pathfinding/Pathfinding.jl")
 include("submodules/schedulers.jl")
 include("submodules/io/AgentsIO.jl")
-include("models/Models.jl")
+# include("models/Models.jl")
 
 # Don't forget to update deprecations between versions!
 include("deprecations.jl")
